@@ -4,34 +4,43 @@ import { UploadedImage, GenerationParams, PromptResult } from "../types";
 
 // Helper to check API Key safely across different environments (Vercel/Vite/Next/CRA)
 const getAIClient = () => {
-  let apiKey: string | undefined = undefined;
+  let apiKey = '';
 
-  // 1. Try standard process.env (Node/Webpack/Next.js/CRA)
+  // 1. Try Vite / Modern Bundlers (Using import.meta.env)
+  // We check specifically for VITE_API_KEY as Vercel + Vite requires this prefix
   try {
-    if (typeof process !== 'undefined' && process.env) {
-      apiKey = process.env.API_KEY || 
-               process.env.NEXT_PUBLIC_API_KEY || 
-               process.env.REACT_APP_API_KEY;
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      // @ts-ignore
+      apiKey = import.meta.env.VITE_API_KEY || import.meta.env.PUBLIC_API_KEY || import.meta.env.API_KEY || '';
     }
   } catch (e) {
-    // Ignore ReferenceError if process is not defined
+    // Ignore syntax errors in environments that don't support import.meta
   }
 
-  // 2. Try Vite import.meta.env
+  // 2. Try Standard Node/Webpack/Next.js/CRA (Using process.env)
   if (!apiKey) {
     try {
-      // @ts-ignore - Check for Vite environment
-      if (typeof import.meta !== 'undefined' && import.meta.env) {
-         // @ts-ignore
-         apiKey = import.meta.env.VITE_API_KEY || import.meta.env.PUBLIC_API_KEY || import.meta.env.API_KEY;
+      if (typeof process !== 'undefined' && process.env) {
+        apiKey = process.env.NEXT_PUBLIC_API_KEY || 
+                 process.env.REACT_APP_API_KEY || 
+                 process.env.API_KEY || 
+                 '';
       }
     } catch (e) {
-      // Ignore syntax errors in non-module environments
+      // Ignore reference errors
     }
   }
 
   if (!apiKey) {
-    throw new Error("API Key is missing. If deploying to Vercel, please set 'VITE_API_KEY' or 'NEXT_PUBLIC_API_KEY' in your Environment Variables.");
+    console.error("DEBUG: Environment variables checked. process.env and import.meta.env yielded no keys.");
+    throw new Error(
+      "API Key is missing.\n\n" +
+      "FOR VERCEL USERS:\n" +
+      "1. Go to Settings > Environment Variables.\n" +
+      "2. Add 'VITE_API_KEY' (Value: your Gemini API Key).\n" +
+      "3. IMPORTANT: Go to Deployments and click 'Redeploy' for changes to take effect."
+    );
   }
   
   return new GoogleGenAI({ apiKey });
