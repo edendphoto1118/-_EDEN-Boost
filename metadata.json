@@ -1,0 +1,5 @@
+{
+  "name": "EDEN_你的建築設計加速器",
+  "description": "A professional tool for architects to convert sketches and references into high-fidelity rendering prompts using Gemini 2.5.",
+  "requestFramePermissions": []
+}
