@@ -2,50 +2,38 @@
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { UploadedImage, GenerationParams, PromptResult } from "../types";
 
-// Helper to check API Key safely across different environments (Vercel/Vite/Next/CRA)
+// Helper to check API Key safely
 const getAIClient = () => {
   let apiKey = '';
-
-  // 1. Try Vite / Modern Bundlers (Using import.meta.env)
   try {
     // @ts-ignore
     if (typeof import.meta !== 'undefined' && import.meta.env) {
       // @ts-ignore
       apiKey = import.meta.env.VITE_API_KEY || import.meta.env.PUBLIC_API_KEY || import.meta.env.API_KEY || '';
     }
-  } catch (e) {
-    // Ignore syntax errors in environments that don't support import.meta
-  }
+  } catch (e) {}
 
-  // 2. Try Standard Node/Webpack/Next.js/CRA (Using process.env)
   if (!apiKey) {
     try {
       if (typeof process !== 'undefined' && process.env) {
-        apiKey = process.env.NEXT_PUBLIC_API_KEY || 
-                 process.env.REACT_APP_API_KEY || 
-                 process.env.API_KEY || 
-                 '';
+        apiKey = process.env.NEXT_PUBLIC_API_KEY || process.env.REACT_APP_API_KEY || process.env.API_KEY || '';
       }
-    } catch (e) {
-      // Ignore reference errors
-    }
+    } catch (e) {}
   }
 
   if (!apiKey) {
-    console.error("DEBUG: Environment variables checked. process.env and import.meta.env yielded no keys.");
     throw new Error(
-      "API Key is missing.\n\n" +
-      "FOR VERCEL USERS:\n" +
-      "1. Go to Settings > Environment Variables.\n" +
-      "2. Add 'VITE_API_KEY' (Value: your Gemini API Key).\n" +
-      "3. IMPORTANT: Go to Deployments and click 'Redeploy' for changes to take effect."
+      "API Key is missing. Please check your environment variables."
     );
   }
   
   return new GoogleGenAI({ apiKey });
 };
 
-// Helper: Resize image to ensure API stability (Max 800px is safer/faster for Flash Image)
+// Helper: Wait function for retries
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Helper: Resize image (Max 800px for stability)
 const resizeImage = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -55,7 +43,7 @@ const resizeImage = (file: File): Promise<string> => {
         const canvas = document.createElement('canvas');
         let width = img.width;
         let height = img.height;
-        const maxDim = 800; // Reduced from 1024 to 800 for better success rate
+        const maxDim = 800; 
         
         if (width > maxDim || height > maxDim) {
            if (width > height) {
@@ -72,7 +60,6 @@ const resizeImage = (file: File): Promise<string> => {
         const ctx = canvas.getContext('2d');
         if (ctx) {
             ctx.drawImage(img, 0, 0, width, height);
-            // Get base64 data only (remove prefix)
             const dataUrl = canvas.toDataURL(file.type === 'image/png' ? 'image/png' : 'image/jpeg', 0.85);
             resolve(dataUrl.split(',')[1]);
         } else {
@@ -98,16 +85,13 @@ const fileToPart = async (file: File) => {
       };
   } catch (error) {
       console.error("Image processing error:", error);
-      throw new Error("Failed to process/resize image. Please try a different file.");
+      throw new Error("Failed to process image.");
   }
 };
 
 const getBestAspectRatio = (width?: number, height?: number): string => {
   if (!width || !height) return "1:1";
-  
   const ratio = width / height;
-  
-  // Supported: "1:1", "3:4", "4:3", "9:16", "16:9"
   const targets = [
     { id: "1:1", val: 1.0 },
     { id: "3:4", val: 0.75 },
@@ -115,16 +99,11 @@ const getBestAspectRatio = (width?: number, height?: number): string => {
     { id: "9:16", val: 0.5625 },
     { id: "16:9", val: 1.777 }
   ];
-
-  // Find closest
-  const best = targets.reduce((prev, curr) => {
+  return targets.reduce((prev, curr) => {
     return (Math.abs(curr.val - ratio) < Math.abs(prev.val - ratio) ? curr : prev);
-  });
-
-  return best.id;
+  }).id;
 };
 
-// Maximum permissive safety settings
 const SAFETY_SETTINGS = [
   { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
   { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -132,29 +111,26 @@ const SAFETY_SETTINGS = [
   { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
+// --- MAIN FUNCTIONS ---
+
 export const optimizeUserPrompt = async (
   inputPrompt: string,
   language: string
 ): Promise<string> => {
   if (!inputPrompt.trim()) return "";
-  
   try {
     const ai = getAIClient();
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: { 
         parts: [{ 
-          text: `Refine the following user idea into a concise, professional architectural visualization prompt description (approx 50-80 words). Focus on materials, atmosphere, and style. The output must be in ${language}. Input: "${inputPrompt}"` 
+          text: `Refine this architectural idea into a concise visualization prompt (50 words) in ${language}. Input: "${inputPrompt}"` 
         }]
       },
-      config: {
-        systemInstruction: "You are an expert Architectural Prompt Engineer. Rewrite user inputs into high-quality, descriptive visualization prompts.",
-        temperature: 0.7,
-      }
+      config: { temperature: 0.7 }
     });
     return response.text?.trim() || inputPrompt;
   } catch (e) {
-    console.error("Optimization failed", e);
     return inputPrompt;
   }
 };
@@ -166,113 +142,111 @@ export const generateArchitecturalPrompt = async (
   params: GenerationParams,
   userPrompt: string, 
   onStatusUpdate?: (status: 'analyzing' | 'generating') => void,
-  masterStylePrompt?: string // Optional parameter for style override
+  masterStylePrompt?: string
 ): Promise<PromptResult> => {
   
   const ai = getAIClient();
 
+  // --- Step 1: Text Analysis ---
   if (onStatusUpdate) onStatusUpdate('analyzing');
-
-  // --- Step 1: Generate Text Prompt ---
-  const textParts = [];
-
-  const systemInstruction = `
-    You are a world-class Senior Architectural Visualizer.
-    Your task is to analyze the provided architectural inputs and generate a highly technical, photorealistic text-to-image prompt.
-
-    ### INPUTS:
-    - Main Sketch: Provided as image.
-    - User Vision: "${userPrompt || 'Not specified'}"
-    - Parameters: ${params.lighting}, ${params.sunDirection}, ${params.weather}
-    - Language: ${params.language}
-
-    ### OUTPUT FORMAT:
-    Provide ONLY the final optimized prompt in ${params.language}.
-    No markdown, no intro.
-  `;
-
+  
+  let optimizedPrompt = "";
   try {
+    const textParts = [];
     textParts.push(await fileToPart(sketch.file));
     if (context) textParts.push(await fileToPart(context.file));
-    for (const ref of references) {
-      textParts.push(await fileToPart(ref.file));
-    }
-    textParts.push({ text: "Generate the architectural prompt based on these inputs." });
-  } catch (err) {
-    throw new Error("Failed to process input images. Please ensure they are valid image files.");
-  }
+    for (const ref of references) textParts.push(await fileToPart(ref.file));
+    
+    textParts.push({ text: `
+      Analyze these inputs for an architectural visualization.
+      User Vision: "${userPrompt || 'Not specified'}"
+      Params: ${params.lighting}, ${params.sunDirection}, ${params.weather}
+      Output ONLY the final descriptive prompt in ${params.language}.
+    `});
 
-  let optimizedPrompt = "";
-
-  try {
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: { parts: textParts },
-      config: {
-        systemInstruction: systemInstruction,
-        temperature: 0.5,
-        safetySettings: SAFETY_SETTINGS,
-      }
+      config: { safetySettings: SAFETY_SETTINGS }
     });
 
-    optimizedPrompt = response.text || "Failed to generate prompt.";
+    optimizedPrompt = response.text || "Prompt generation failed.";
   } catch (error: any) {
-    console.error("Gemini Text API Error:", error);
-    if (error.message?.includes('API Key')) throw error;
+    console.error("Text Gen Error:", error);
     throw new Error(`Analysis failed: ${error.message || 'Unknown error'}`);
   }
 
-  // --- Step 2: Generate Image ---
+  // --- Step 2: Image Generation (With Retry Logic) ---
   let generatedImageData: string | undefined = undefined;
   let imageGenerationError: string | undefined = undefined;
 
+  // Prepare image parts once to avoid reprocessing
+  const imageGenParts = [];
   try {
-    if (onStatusUpdate) onStatusUpdate('generating');
+      imageGenParts.push(await fileToPart(sketch.file));
+      const aspectRatio = getBestAspectRatio(sketch.width, sketch.height);
+      const imageGenPrompt = `
+        Create a photorealistic architectural rendering.
+        ${masterStylePrompt ? `STYLE: ${masterStylePrompt}` : 'Style: Photorealistic, 8k, Unreal Engine 5.'}
+        DESCRIPTION: ${optimizedPrompt.slice(0, 800)}
+        CONSTRAINTS: Use sketch geometry strictly. High fidelity.
+      `;
+      imageGenParts.push({ text: imageGenPrompt });
 
-    const imageParts = [];
-    imageParts.push(await fileToPart(sketch.file));
-    const aspectRatio = getBestAspectRatio(sketch.width, sketch.height);
+      if (onStatusUpdate) onStatusUpdate('generating');
 
-    const imageGenPrompt = `
-      Create a photorealistic architectural rendering.
-      ${masterStylePrompt ? `STYLE: ${masterStylePrompt}` : 'Style: Photorealistic, 8k, Unreal Engine 5.'}
-      
-      DESCRIPTION:
-      ${optimizedPrompt.slice(0, 800)} 
-      
-      CONSTRAINTS:
-      - Use the provided sketch image strictly for geometry.
-      - High fidelity, detailed textures.
-    `;
+      // Retry Loop
+      const MAX_RETRIES = 3;
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const imageResponse = await ai.models.generateContent({
+              model: 'gemini-2.5-flash-image', 
+              contents: { parts: imageGenParts },
+              config: {
+                imageConfig: { aspectRatio: aspectRatio },
+                safetySettings: SAFETY_SETTINGS,
+              }
+            });
 
-    imageParts.push({ text: imageGenPrompt });
+            const candidate = imageResponse.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+            if (candidate?.inlineData?.data) {
+                generatedImageData = candidate.inlineData.data;
+                break; // Success, exit loop
+            } else {
+                // If no image data, check for text refusal
+                const refusalText = imageResponse.candidates?.[0]?.content?.parts?.find(p => p.text)?.text;
+                throw new Error(refusalText || "Model returned no image data.");
+            }
 
-    const imageResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image', 
-      contents: { parts: imageParts },
-      config: {
-         imageConfig: { 
-           aspectRatio: aspectRatio,
-         },
-         safetySettings: SAFETY_SETTINGS,
+        } catch (err: any) {
+            const msg = err.message || JSON.stringify(err);
+            const isQuota = msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED');
+            const isOverloaded = msg.includes('503') || msg.includes('Overloaded');
+
+            console.warn(`Attempt ${attempt} failed.`, err);
+
+            if ((isQuota || isOverloaded) && attempt < MAX_RETRIES) {
+                // Exponential backoff: 2s, 4s
+                const delay = 2000 * attempt; 
+                await wait(delay);
+                continue; // Retry
+            }
+
+            // If we reached here, it's a fatal error or max retries hit.
+            // Santize the error message for the UI
+            if (isQuota) {
+                imageGenerationError = "Daily Quota Exceeded. The free tier for Gemini Image generation is currently exhausted or busy. Please try again later.";
+            } else if (msg.includes('Safety') || msg.includes('block')) {
+                imageGenerationError = "Safety Block. The model refused the request due to safety guidelines. Try a simpler sketch.";
+            } else {
+                imageGenerationError = `Generation Failed: ${msg.substring(0, 100)}...`;
+            }
+            break; // Exit loop
+        }
       }
-    });
 
-    for (const part of imageResponse.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        generatedImageData = part.inlineData.data;
-        break;
-      }
-    }
-    
-    if (!generatedImageData) {
-       const textPart = imageResponse.candidates?.[0]?.content?.parts?.find(p => p.text)?.text;
-       throw new Error(textPart || "The model refused to generate an image (Safety/Policy filter triggered). Try a different sketch or description.");
-    }
-
-  } catch (error: any) {
-    console.error("Gemini Image API Error:", error);
-    imageGenerationError = `Image Generation Failed: ${error.message || 'Unknown error'}. You can still use the prompt above with other AI tools (Midjourney/Stable Diffusion).`;
+  } catch (setupError: any) {
+      imageGenerationError = "Failed to prepare image data: " + setupError.message;
   }
 
   return {
@@ -290,7 +264,6 @@ export const applyMasterStyle = async (
   stylePrompt: string
 ): Promise<string> => {
   const ai = getAIClient();
-  
   const parts = [
     { inlineData: { data: currentImageBase64, mimeType: 'image/png' } },
     { text: `Apply style: "${stylePrompt}" to this image. Keep geometry. Photorealistic.` }
@@ -302,20 +275,11 @@ export const applyMasterStyle = async (
       contents: { parts: parts },
       config: { safetySettings: SAFETY_SETTINGS }
     });
-
-    let styledImageData = "";
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        styledImageData = part.inlineData.data;
-        break;
-      }
-    }
-    
-    if (!styledImageData) throw new Error("The model did not return an image.");
-    return styledImageData;
+    const data = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
+    if (!data) throw new Error("No image returned.");
+    return data;
   } catch (error: any) {
-    console.error("Master Style Application Error:", error);
-    throw new Error(`Filter application failed: ${error.message}`);
+    throw new Error(`Filter failed: ${error.message}`);
   }
 };
 
@@ -325,7 +289,6 @@ export const editArchitecturalImage = async (
   editPrompt: string,
 ): Promise<string> => {
    const ai = getAIClient();
-   
    const parts = [
       { inlineData: { data: originalImageBase64, mimeType: 'image/png' } },
       { inlineData: { data: maskImageBase64, mimeType: 'image/png' } },
@@ -338,19 +301,10 @@ export const editArchitecturalImage = async (
         contents: { parts: parts },
         config: { safetySettings: SAFETY_SETTINGS }
     });
-    
-    let editedImageData = "";
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-        if (part.inlineData) {
-            editedImageData = part.inlineData.data;
-            break;
-        }
-    }
-    
-    if (!editedImageData) throw new Error("The model did not return an edited image.");
-    return editedImageData;
+    const data = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
+    if (!data) throw new Error("No edited image returned.");
+    return data;
    } catch (error: any) {
-      console.error("Edit Error:", error);
-      throw new Error(`Editing failed: ${error.message}`);
+      throw new Error(`Edit failed: ${error.message}`);
    }
 };
