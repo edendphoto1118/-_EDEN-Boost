@@ -45,7 +45,7 @@ const getAIClient = () => {
   return new GoogleGenAI({ apiKey });
 };
 
-// Helper: Resize image to ensure API stability (Max 1024px)
+// Helper: Resize image to ensure API stability (Max 800px is safer/faster for Flash Image)
 const resizeImage = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -55,7 +55,7 @@ const resizeImage = (file: File): Promise<string> => {
         const canvas = document.createElement('canvas');
         let width = img.width;
         let height = img.height;
-        const maxDim = 1024; // Reduce size for faster/stable inference
+        const maxDim = 800; // Reduced from 1024 to 800 for better success rate
         
         if (width > maxDim || height > maxDim) {
            if (width > height) {
@@ -124,7 +124,7 @@ const getBestAspectRatio = (width?: number, height?: number): string => {
   return best.id;
 };
 
-// Common safety settings to prevent blocking architectural sketches
+// Maximum permissive safety settings
 const SAFETY_SETTINGS = [
   { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
   { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -176,7 +176,6 @@ export const generateArchitecturalPrompt = async (
   // --- Step 1: Generate Text Prompt ---
   const textParts = [];
 
-  // System Instruction construction
   const systemInstruction = `
     You are a world-class Senior Architectural Visualizer.
     Your task is to analyze the provided architectural inputs and generate a highly technical, photorealistic text-to-image prompt.
@@ -192,16 +191,13 @@ export const generateArchitecturalPrompt = async (
     No markdown, no intro.
   `;
 
-  // Add images to content parts
   try {
     textParts.push(await fileToPart(sketch.file));
     if (context) textParts.push(await fileToPart(context.file));
     for (const ref of references) {
       textParts.push(await fileToPart(ref.file));
     }
-    
     textParts.push({ text: "Generate the architectural prompt based on these inputs." });
-
   } catch (err) {
     throw new Error("Failed to process input images. Please ensure they are valid image files.");
   }
@@ -235,7 +231,6 @@ export const generateArchitecturalPrompt = async (
 
     const imageParts = [];
     imageParts.push(await fileToPart(sketch.file));
-    
     const aspectRatio = getBestAspectRatio(sketch.width, sketch.height);
 
     const imageGenPrompt = `
@@ -243,7 +238,7 @@ export const generateArchitecturalPrompt = async (
       ${masterStylePrompt ? `STYLE: ${masterStylePrompt}` : 'Style: Photorealistic, 8k, Unreal Engine 5.'}
       
       DESCRIPTION:
-      ${optimizedPrompt}
+      ${optimizedPrompt.slice(0, 800)} 
       
       CONSTRAINTS:
       - Use the provided sketch image strictly for geometry.
@@ -271,23 +266,20 @@ export const generateArchitecturalPrompt = async (
     }
     
     if (!generatedImageData) {
-       // Check if there is text explanation for refusal
        const textPart = imageResponse.candidates?.[0]?.content?.parts?.find(p => p.text)?.text;
-       throw new Error(textPart || "Model returned no image. It may have been blocked by safety filters.");
+       throw new Error(textPart || "The model refused to generate an image (Safety/Policy filter triggered). Try a different sketch or description.");
     }
 
   } catch (error: any) {
     console.error("Gemini Image API Error:", error);
-    // DO NOT THROW HERE. We want to return the prompt even if image fails.
-    // This allows the user to at least copy the prompt.
-    imageGenerationError = `Image Generation Failed: ${error.message || 'Unknown error'}. You can still use the prompt above with other tools.`;
+    imageGenerationError = `Image Generation Failed: ${error.message || 'Unknown error'}. You can still use the prompt above with other AI tools (Midjourney/Stable Diffusion).`;
   }
 
   return {
     id: Date.now().toString(),
     prompt: optimizedPrompt,
     imageData: generatedImageData,
-    error: imageGenerationError, // Pass the error to the UI
+    error: imageGenerationError,
     timestamp: Date.now()
   };
 };

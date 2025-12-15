@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { 
   LightingTime, 
@@ -83,7 +84,13 @@ const App: React.FC = () => {
         (currentStatus) => setStatus(currentStatus),
         masterStylePrompt
       );
+      
       setResult(generatedResult);
+      
+      // If there was an image generation error (but prompt success), show it in main error bar too
+      if (generatedResult.error) {
+        setError(generatedResult.error);
+      }
       
       // Add to history (keep max 3)
       setHistory(prev => {
@@ -239,8 +246,8 @@ const App: React.FC = () => {
       <main className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col gap-8">
         
         {error && (
-          <div className="mb-6 bg-rose-950/20 border border-rose-500/20 rounded-lg p-4 flex items-center gap-3 text-rose-300 backdrop-blur-sm">
-            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+          <div className="mb-6 bg-rose-900/20 border border-rose-500/40 rounded-lg p-4 flex items-center gap-3 text-rose-200 backdrop-blur-sm shadow-[0_0_15px_-3px_rgba(244,63,94,0.2)]">
+            <AlertCircle className="w-5 h-5 flex-shrink-0 text-rose-500" />
             <p className="text-sm font-medium">{error}</p>
           </div>
         )}
@@ -304,7 +311,10 @@ const App: React.FC = () => {
               <ImageUploader 
                 label={t.sketchLabel} 
                 images={sketch} 
-                onImagesChange={setSketch} 
+                onImagesChange={(imgs) => {
+                   setSketch(imgs);
+                   setError(null); // Clear error on new upload
+                }} 
                 required
                 language={params.language}
               />
@@ -412,11 +422,9 @@ const App: React.FC = () => {
               />
             )}
 
-            {/* History Section (No Changes) */}
-            {/* Note: I'm keeping the original history section as is, just pushed down */}
+            {/* History Section */}
             {(result || history.length > 0) && (
                 <div className="mt-12 border-t border-white/5 pt-8">
-                {/* ... existing history code ... */}
                <h3 className="text-base font-bold text-zinc-400 mb-6 flex items-center gap-2 uppercase tracking-widest">
                   <Clock className="w-5 h-5" />
                   {t.historyLabel}
@@ -441,8 +449,8 @@ const App: React.FC = () => {
                                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110 opacity-60 group-hover:opacity-100"
                                />
                            ) : (
-                               <div className="w-full h-full flex items-center justify-center text-zinc-700 text-xs">
-                                   NO DATA
+                               <div className="w-full h-full flex items-center justify-center text-zinc-700 text-xs bg-rose-950/20">
+                                   ERROR
                                </div>
                            )}
                            <div className="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-4">
@@ -462,11 +470,9 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Shopee Affiliate / Ad Section (RECOMMENDED ITEMS) - MOVED TO BOTTOM */}
+        {/* Shopee Affiliate / Ad Section */}
         <div className="w-full mt-4 animate-in fade-in slide-in-from-bottom-8 duration-1000">
             <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-6 flex flex-col sm:flex-row items-center gap-6 hover:border-orange-500/20 transition-all shadow-lg group">
-                
-                {/* Product Thumbnail */}
                 <div className="w-24 h-24 sm:w-32 sm:h-32 flex-shrink-0 rounded-xl overflow-hidden border border-white/10 bg-black/50 relative">
                     <img 
                         src="https://images.unsplash.com/photo-1503387762-592deb58ef4e?q=80&w=2662&auto=format&fit=crop" 
@@ -478,7 +484,6 @@ const App: React.FC = () => {
                     </div>
                 </div>
 
-                {/* Product Info */}
                 <div className="flex-1 text-center sm:text-left space-y-2">
                     <div className="flex items-center justify-center sm:justify-start gap-2 text-[#ee4d2d] text-xs font-bold uppercase tracking-widest">
                         <ShoppingBag className="w-4 h-4" />
@@ -492,7 +497,6 @@ const App: React.FC = () => {
                     </p>
                 </div>
 
-                {/* Action Button */}
                 <button 
                     onClick={handleVisitShop}
                     className="w-full sm:w-auto flex-shrink-0 bg-[#ee4d2d] hover:bg-[#d03e1e] text-white px-8 py-4 rounded-xl text-sm font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-[0_4px_14px_-4px_rgba(238,77,45,0.5)] active:scale-95 group-hover:shadow-[0_0_20px_-5px_rgba(238,77,45,0.6)]"

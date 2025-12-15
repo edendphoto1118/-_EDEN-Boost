@@ -68,13 +68,13 @@ const ResultCard: React.FC<ResultCardProps> = ({
     <div className="grid grid-cols-1 gap-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
       
       {/* 1. Image Result Section */}
-      <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-3xl overflow-hidden shadow-2xl relative">
+      <div className={`bg-black/40 backdrop-blur-md border rounded-3xl overflow-hidden shadow-2xl relative transition-colors ${hasError ? 'border-rose-500/30' : 'border-white/10'}`}>
           <div className="bg-white/5 px-6 py-4 border-b border-white/5 flex justify-between items-center backdrop-blur-sm">
-            <h3 className="text-cyan-400 font-medium text-sm sm:text-base flex items-center gap-2 font-mono uppercase tracking-wider">
+            <h3 className={`font-medium text-sm sm:text-base flex items-center gap-2 font-mono uppercase tracking-wider ${hasError ? 'text-rose-400' : 'text-cyan-400'}`}>
               <ImageIcon className="w-5 h-5" />
               {title} 
-              <span className="text-[10px] sm:text-xs bg-cyan-950/50 text-cyan-300 px-2 py-0.5 rounded-full border border-cyan-500/20">
-                {badge || "Gemini 2.5"}
+              <span className={`text-[10px] sm:text-xs px-2 py-0.5 rounded-full border ${hasError ? 'bg-rose-950/50 text-rose-300 border-rose-500/20' : 'bg-cyan-950/50 text-cyan-300 border-cyan-500/20'}`}>
+                {hasError ? "FAILED" : (badge || "Gemini 2.5")}
               </span>
             </h3>
             
@@ -108,7 +108,10 @@ const ResultCard: React.FC<ResultCardProps> = ({
             </div>
           </div>
           
-          <div className="p-1 bg-black/50 min-h-[300px] flex items-center justify-center">
+          <div className="p-1 bg-black/50 min-h-[300px] flex items-center justify-center relative overflow-hidden">
+             {/* Subtle error background effect */}
+             {hasError && <div className="absolute inset-0 bg-rose-900/10 pointer-events-none" />}
+
             {hasImage ? (
                 isEditing ? (
                    <div className="space-y-4 p-4 w-full">
@@ -166,17 +169,23 @@ const ResultCard: React.FC<ResultCardProps> = ({
                   </div>
                 )
             ) : (
-                // Error State Display
-                <div className="flex flex-col items-center justify-center p-8 text-center max-w-md">
-                   <div className="w-12 h-12 bg-rose-500/10 rounded-full flex items-center justify-center mb-4 border border-rose-500/30">
-                      <AlertTriangle className="w-6 h-6 text-rose-500" />
+                // Explicit Error State
+                <div className="flex flex-col items-center justify-center p-8 text-center max-w-md relative z-10">
+                   <div className="w-16 h-16 bg-rose-500/10 rounded-full flex items-center justify-center mb-6 border border-rose-500/30 shadow-[0_0_20px_-5px_rgba(244,63,94,0.4)]">
+                      <AlertTriangle className="w-8 h-8 text-rose-500" />
                    </div>
-                   <h4 className="text-zinc-200 font-bold mb-2">Image Generation Failed</h4>
-                   <p className="text-zinc-500 text-sm mb-4">{result.error}</p>
-                   <p className="text-zinc-600 text-xs">
-                     The AI generated a text prompt (below), but failed to render the image. 
-                     This can happen due to high server load or safety filters.
+                   <h4 className="text-xl text-rose-200 font-bold mb-3 tracking-wide">Image Generation Failed</h4>
+                   <p className="text-zinc-400 text-sm mb-6 leading-relaxed bg-black/40 p-4 rounded-lg border border-white/5">
+                     {result.error || "Unknown error occurred during rendering."}
                    </p>
+                   <div className="flex flex-col gap-2 text-xs text-zinc-500 font-mono">
+                     <p>Possible reasons:</p>
+                     <ul className="list-disc text-left pl-6 space-y-1">
+                       <li>Safety/Policy filters triggered by the sketch lines.</li>
+                       <li>Server load (Model overloaded).</li>
+                       <li>Input image too complex or ambiguous.</li>
+                     </ul>
+                   </div>
                 </div>
             )}
           </div>
