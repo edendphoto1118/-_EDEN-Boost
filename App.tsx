@@ -93,7 +93,7 @@ const App: React.FC = () => {
 
     } catch (err: any) {
       console.error(err);
-      setError(t.errorGeneric);
+      setError(err.message || t.errorGeneric);
     } finally {
       setStatus('idle');
     }
@@ -130,9 +130,9 @@ const App: React.FC = () => {
         return newHistory.slice(0, 3);
       });
 
-    } catch (err) {
+    } catch (err: any) {
       console.error("Master Style Error", err);
-      setError(t.errorGeneric);
+      setError(err.message || t.errorGeneric);
     } finally {
       setStatus('idle');
     }
@@ -158,9 +158,9 @@ const App: React.FC = () => {
        setHistory(prev => [updatedResult, ...prev].slice(0, 3));
        
        setEditingTarget(null);
-    } catch (err) {
+    } catch (err: any) {
        console.error("Edit failed", err);
-       setError(t.errorGeneric);
+       setError(err.message || t.errorGeneric);
     } finally {
        setStatus('idle');
     }

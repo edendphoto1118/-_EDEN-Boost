@@ -2,20 +2,38 @@
 import { GoogleGenAI } from "@google/genai";
 import { UploadedImage, GenerationParams, PromptResult } from "../types";
 
+// Helper to check API Key
+const getAIClient = () => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
+    throw new Error("API_KEY is missing. Please ensure it is set in your environment variables (e.g., .env file or Vercel Dashboard).");
+  }
+  return new GoogleGenAI({ apiKey });
+};
+
 const fileToPart = async (file: File) => {
   return new Promise<{ inlineData: { data: string; mimeType: string } }>((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
-      const base64String = reader.result as string;
-      const base64Data = base64String.split(',')[1];
-      resolve({
-        inlineData: {
-          data: base64Data,
-          mimeType: file.type,
-        },
-      });
+      try {
+        const base64String = reader.result as string;
+        // Ensure valid base64 string
+        if (!base64String || !base64String.includes(',')) {
+          reject(new Error("Failed to process image file."));
+          return;
+        }
+        const base64Data = base64String.split(',')[1];
+        resolve({
+          inlineData: {
+            data: base64Data,
+            mimeType: file.type,
+          },
+        });
+      } catch (e) {
+        reject(e);
+      }
     };
-    reader.onerror = reject;
+    reader.onerror = (e) => reject(new Error("File reading failed"));
     reader.readAsDataURL(file);
   });
 };
@@ -50,9 +68,8 @@ export const optimizeUserPrompt = async (
 ): Promise<string> => {
   if (!inputPrompt.trim()) return "";
   
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  
   try {
+    const ai = getAIClient();
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: { 
@@ -68,6 +85,7 @@ export const optimizeUserPrompt = async (
     return response.text?.trim() || inputPrompt;
   } catch (e) {
     console.error("Optimization failed", e);
+    // Do not throw here, just return original to keep app usable
     return inputPrompt;
   }
 };
@@ -82,7 +100,7 @@ export const generateArchitecturalPrompt = async (
   masterStylePrompt?: string // Optional parameter for style override
 ): Promise<PromptResult> => {
   
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = getAIClient();
 
   if (onStatusUpdate) onStatusUpdate('analyzing');
 
@@ -119,14 +137,19 @@ export const generateArchitecturalPrompt = async (
   `;
 
   // Add images to content parts
-  textParts.push(await fileToPart(sketch.file));
-  if (context) textParts.push(await fileToPart(context.file));
-  for (const ref of references) {
-    textParts.push(await fileToPart(ref.file));
+  try {
+    textParts.push(await fileToPart(sketch.file));
+    if (context) textParts.push(await fileToPart(context.file));
+    for (const ref of references) {
+      textParts.push(await fileToPart(ref.file));
+    }
+    
+    // We send a trigger message to start the generation
+    textParts.push({ text: "Generate the architectural prompt based on these inputs." });
+
+  } catch (err) {
+    throw new Error("Failed to process input images. Please ensure they are valid image files.");
   }
-  
-  // We send a trigger message to start the generation
-  textParts.push({ text: "Generate the architectural prompt based on these inputs." });
 
   let optimizedPrompt = "";
 
@@ -141,9 +164,10 @@ export const generateArchitecturalPrompt = async (
     });
 
     optimizedPrompt = response.text || "Failed to generate prompt.";
-  } catch (error) {
+  } catch (error: any) {
     console.error("Gemini Text API Error:", error);
-    throw error;
+    if (error.message?.includes('API_KEY')) throw error;
+    throw new Error(`Analysis failed: ${error.message || 'Unknown error'}`);
   }
 
   // --- Step 2: Generate Image ---
@@ -194,6 +218,7 @@ export const generateArchitecturalPrompt = async (
     }
 
   } catch (error) {
+    // Image generation is optional (can fail gracefully), but good to log
     console.error("Gemini Image API Error:", error);
   }
 
@@ -210,7 +235,7 @@ export const applyMasterStyle = async (
   originalPrompt: string,
   stylePrompt: string
 ): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = getAIClient();
   
   const parts = [
     { inlineData: { data: currentImageBase64, mimeType: 'image/png' } },
@@ -248,11 +273,11 @@ export const applyMasterStyle = async (
       }
     }
     
-    if (!styledImageData) throw new Error("Failed to generate styled image");
+    if (!styledImageData) throw new Error("The model did not return an image. It might have been blocked by safety settings.");
     return styledImageData;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Master Style Application Error:", error);
-    throw error;
+    throw new Error(`Filter application failed: ${error.message}`);
   }
 };
 
@@ -261,7 +286,7 @@ export const editArchitecturalImage = async (
   maskImageBase64: string,
   editPrompt: string,
 ): Promise<string> => {
-   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+   const ai = getAIClient();
    
    const parts = [
       { inlineData: { data: originalImageBase64, mimeType: 'image/png' } },
@@ -280,19 +305,24 @@ export const editArchitecturalImage = async (
       `}
    ];
 
-   const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: { parts: parts },
-   });
-   
-   let editedImageData = "";
-   for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        editedImageData = part.inlineData.data;
-        break;
-      }
+   try {
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: parts },
+    });
+    
+    let editedImageData = "";
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+        if (part.inlineData) {
+            editedImageData = part.inlineData.data;
+            break;
+        }
+    }
+    
+    if (!editedImageData) throw new Error("The model did not return an edited image.");
+    return editedImageData;
+   } catch (error: any) {
+      console.error("Edit Error:", error);
+      throw new Error(`Editing failed: ${error.message}`);
    }
-   
-   if (!editedImageData) throw new Error("Failed to generate edited image");
-   return editedImageData;
 };
