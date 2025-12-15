@@ -1,7 +1,8 @@
+
 import React, { useState } from 'react';
 import { PromptResult, Language, MasterStyle } from '../types';
 import { TRANSLATIONS } from '../constants';
-import { ImageIcon, Maximize2, Pencil, Download, Check, Copy, Camera, Zap } from 'lucide-react';
+import { ImageIcon, Maximize2, Pencil, Download, Check, Copy, Camera, Zap, AlertTriangle } from 'lucide-react';
 import InpaintingCanvas from './InpaintingCanvas';
 
 interface ResultCardProps {
@@ -54,20 +55,20 @@ const ResultCard: React.FC<ResultCardProps> = ({
   const handleApply = () => {
     if (localEditMask && localEditPrompt) {
       onEditApply(localEditMask, localEditPrompt);
-      // Reset local state after apply handled by parent
       setLocalEditMask(null);
       setLocalEditPrompt("");
     }
   };
 
   const isProcessing = status !== 'idle';
+  const hasError = !!result.error;
+  const hasImage = !!result.imageData;
 
   return (
     <div className="grid grid-cols-1 gap-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
       
-      {/* 1. Image Result */}
-      {result.imageData && (
-        <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-3xl overflow-hidden shadow-2xl relative">
+      {/* 1. Image Result Section */}
+      <div className="bg-black/40 backdrop-blur-md border border-white/10 rounded-3xl overflow-hidden shadow-2xl relative">
           <div className="bg-white/5 px-6 py-4 border-b border-white/5 flex justify-between items-center backdrop-blur-sm">
             <h3 className="text-cyan-400 font-medium text-sm sm:text-base flex items-center gap-2 font-mono uppercase tracking-wider">
               <ImageIcon className="w-5 h-5" />
@@ -78,7 +79,7 @@ const ResultCard: React.FC<ResultCardProps> = ({
             </h3>
             
             <div className="flex items-center gap-2">
-               {!isEditing && (
+               {hasImage && !isEditing && (
                   <>
                   <button 
                       onClick={onZoom}
@@ -95,78 +96,93 @@ const ResultCard: React.FC<ResultCardProps> = ({
                       <Pencil className="w-4 h-4" />
                       {t.editMode}
                   </button>
+                   <button
+                      onClick={onDownload}
+                      className="flex items-center gap-2 px-3 py-2 text-xs font-bold uppercase tracking-wider bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg transition-colors border border-white/5"
+                  >
+                      <Download className="w-4 h-4" />
+                      {t.download}
+                  </button>
                   </>
                )}
-               <button
-                  onClick={onDownload}
-                  className="flex items-center gap-2 px-3 py-2 text-xs font-bold uppercase tracking-wider bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg transition-colors border border-white/5"
-              >
-                  <Download className="w-4 h-4" />
-                  {t.download}
-              </button>
             </div>
           </div>
           
-          <div className="p-1 bg-black/50">
-            {isEditing ? (
-               <div className="space-y-4 p-4">
-                  <InpaintingCanvas 
-                      baseImage={result.imageData} 
-                      onMaskReady={setLocalEditMask}
-                      language={language}
-                  />
-                  
-                  <div className="bg-zinc-900/80 p-5 rounded-xl border border-white/10 flex flex-col gap-4">
-                      <label className="text-sm text-zinc-400 font-bold uppercase tracking-wider">
-                          {t.editPromptPlaceholder}
-                      </label>
-                      <div className="flex gap-2">
-                          <input 
-                              type="text" 
-                              value={localEditPrompt}
-                              onChange={(e) => setLocalEditPrompt(e.target.value)}
-                              placeholder="e.g. Change the concrete material to brick"
-                              className="flex-1 bg-black border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 placeholder-zinc-700"
-                          />
-                          <button 
-                              onClick={handleApply}
-                              disabled={!localEditMask || !localEditPrompt || status === 'editing'}
-                              className="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-5 py-2 rounded-lg text-sm font-bold transition-colors whitespace-nowrap"
-                          >
-                              {t.applyEdit}
-                          </button>
-                           <button 
-                              onClick={() => {
-                                setLocalEditMask(null);
-                                setLocalEditPrompt("");
-                                onEditCancel();
-                              }}
-                              className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-5 py-2 rounded-lg text-sm font-bold transition-colors"
-                          >
-                              {t.cancelEdit}
-                          </button>
+          <div className="p-1 bg-black/50 min-h-[300px] flex items-center justify-center">
+            {hasImage ? (
+                isEditing ? (
+                   <div className="space-y-4 p-4 w-full">
+                      <InpaintingCanvas 
+                          baseImage={result.imageData!} 
+                          onMaskReady={setLocalEditMask}
+                          language={language}
+                      />
+                      
+                      <div className="bg-zinc-900/80 p-5 rounded-xl border border-white/10 flex flex-col gap-4">
+                          <label className="text-sm text-zinc-400 font-bold uppercase tracking-wider">
+                              {t.editPromptPlaceholder}
+                          </label>
+                          <div className="flex gap-2">
+                              <input 
+                                  type="text" 
+                                  value={localEditPrompt}
+                                  onChange={(e) => setLocalEditPrompt(e.target.value)}
+                                  placeholder="e.g. Change the concrete material to brick"
+                                  className="flex-1 bg-black border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 placeholder-zinc-700"
+                              />
+                              <button 
+                                  onClick={handleApply}
+                                  disabled={!localEditMask || !localEditPrompt || status === 'editing'}
+                                  className="bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-5 py-2 rounded-lg text-sm font-bold transition-colors whitespace-nowrap"
+                              >
+                                  {t.applyEdit}
+                              </button>
+                               <button 
+                                  onClick={() => {
+                                    setLocalEditMask(null);
+                                    setLocalEditPrompt("");
+                                    onEditCancel();
+                                  }}
+                                  className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-5 py-2 rounded-lg text-sm font-bold transition-colors"
+                              >
+                                  {t.cancelEdit}
+                              </button>
+                          </div>
+                      </div>
+                   </div>
+                ) : (
+                  <div className="relative group cursor-zoom-in w-full" onClick={onZoom}>
+                      <img 
+                          src={`data:image/png;base64,${result.imageData}`} 
+                          alt="Visualization" 
+                          className="w-full h-auto rounded-xl shadow-2xl border border-white/5 transition-opacity hover:opacity-95"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                          <div className="bg-black/70 backdrop-blur-md px-6 py-3 rounded-full text-white text-sm font-bold tracking-wider flex items-center gap-2 border border-white/10">
+                              <Maximize2 className="w-5 h-5" />
+                              {t.zoomIn}
+                          </div>
                       </div>
                   </div>
-               </div>
+                )
             ) : (
-              <div className="relative group cursor-zoom-in" onClick={onZoom}>
-                  <img 
-                      src={`data:image/png;base64,${result.imageData}`} 
-                      alt="Visualization" 
-                      className="w-full h-auto rounded-xl shadow-2xl border border-white/5 transition-opacity hover:opacity-95"
-                  />
-                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                      <div className="bg-black/70 backdrop-blur-md px-6 py-3 rounded-full text-white text-sm font-bold tracking-wider flex items-center gap-2 border border-white/10">
-                          <Maximize2 className="w-5 h-5" />
-                          {t.zoomIn}
-                      </div>
-                  </div>
-              </div>
+                // Error State Display
+                <div className="flex flex-col items-center justify-center p-8 text-center max-w-md">
+                   <div className="w-12 h-12 bg-rose-500/10 rounded-full flex items-center justify-center mb-4 border border-rose-500/30">
+                      <AlertTriangle className="w-6 h-6 text-rose-500" />
+                   </div>
+                   <h4 className="text-zinc-200 font-bold mb-2">Image Generation Failed</h4>
+                   <p className="text-zinc-500 text-sm mb-4">{result.error}</p>
+                   <p className="text-zinc-600 text-xs">
+                     The AI generated a text prompt (below), but failed to render the image. 
+                     This can happen due to high server load or safety filters.
+                   </p>
+                </div>
             )}
           </div>
 
           {/* Master Filter Toolbar */}
-          {!isEditing && filterConfig && (
+          {!isEditing && hasImage && filterConfig && (
               <div className="bg-black/60 px-6 py-5 border-t border-white/5 backdrop-blur-xl">
                    <h4 className="text-xs font-bold text-zinc-500 mb-4 uppercase tracking-[0.2em] flex items-center gap-2">
                       <Camera className="w-4 h-4" />
@@ -189,14 +205,13 @@ const ResultCard: React.FC<ResultCardProps> = ({
                    </div>
               </div>
           )}
-        </div>
-      )}
+      </div>
 
       {/* 2. Text Prompt Result */}
       <div className="bg-zinc-900/40 backdrop-blur-xl border border-white/10 rounded-3xl overflow-hidden shadow-lg">
         <div className="bg-white/5 px-6 py-4 border-b border-white/5 flex justify-between items-center">
           <h3 className="text-zinc-100 font-medium text-sm sm:text-base flex items-center gap-2 font-mono uppercase tracking-wider">
-            <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
+            <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_rgba(16,185,129,0.5)] ${hasError ? 'bg-amber-500 animate-none' : 'bg-emerald-500 animate-pulse'}`} />
             {t.resultReady}
           </h3>
           <button

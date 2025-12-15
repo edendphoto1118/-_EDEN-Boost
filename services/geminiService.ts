@@ -155,7 +155,6 @@ export const optimizeUserPrompt = async (
     return response.text?.trim() || inputPrompt;
   } catch (e) {
     console.error("Optimization failed", e);
-    // Do not throw here, just return original to keep app usable
     return inputPrompt;
   }
 };
@@ -179,31 +178,18 @@ export const generateArchitecturalPrompt = async (
 
   // System Instruction construction
   const systemInstruction = `
-    You are a world-class Senior Architectural Visualizer and AI Prompt Engineering Expert.
-    Your task is to analyze the provided architectural inputs and generate a highly technical, photorealistic text-to-image prompt optimized for high-end rendering engines.
+    You are a world-class Senior Architectural Visualizer.
+    Your task is to analyze the provided architectural inputs and generate a highly technical, photorealistic text-to-image prompt.
 
-    ### INPUTS TO ANALYZE:
-    1. Main Sketch: The first attached image.
-    2. Aerial/Site Context: ${context ? 'The second attached image.' : 'Not provided.'}
-    3. Style References: ${references.length > 0 ? 'Subsequent attached images.' : 'Not provided.'}
-    
-    ### USER PARAMETERS:
+    ### INPUTS:
+    - Main Sketch: Provided as image.
     - User Vision: "${userPrompt || 'Not specified'}"
-    - Lighting: ${params.lighting}
-    - Sun Direction: ${params.sunDirection}
-    - Weather: ${params.weather}
-    - Target Language: ${params.language}
-
-    ### PROCESS:
-    1. **Geometry:** Strictly respect the form in the 'Main Sketch'.
-    2. **Vision:** "User Vision" takes precedence. Blend it with the sketch geometry.
-    3. **Context:** If Context image exists, emphasize "Photorealistic aerial montage".
-    4. **Style:** Extract from User Vision first, then References.
-    5. **Lighting/Weather:** specific keywords based on parameters.
+    - Parameters: ${params.lighting}, ${params.sunDirection}, ${params.weather}
+    - Language: ${params.language}
 
     ### OUTPUT FORMAT:
     Provide ONLY the final optimized prompt in ${params.language}.
-    Structure: "[Subject Description] + [Environment] + [Material/Style] + [Lighting/Weather] + [Technical Tags]"
+    No markdown, no intro.
   `;
 
   // Add images to content parts
@@ -214,7 +200,6 @@ export const generateArchitecturalPrompt = async (
       textParts.push(await fileToPart(ref.file));
     }
     
-    // We send a trigger message to start the generation
     textParts.push({ text: "Generate the architectural prompt based on these inputs." });
 
   } catch (err) {
@@ -243,6 +228,7 @@ export const generateArchitecturalPrompt = async (
 
   // --- Step 2: Generate Image ---
   let generatedImageData: string | undefined = undefined;
+  let imageGenerationError: string | undefined = undefined;
 
   try {
     if (onStatusUpdate) onStatusUpdate('generating');
@@ -252,21 +238,16 @@ export const generateArchitecturalPrompt = async (
     
     const aspectRatio = getBestAspectRatio(sketch.width, sketch.height);
 
-    // CRITICAL UPDATE: Master Style is prioritized ABOVE the calculated prompt
     const imageGenPrompt = `
-      [TASK]
-      Create a photorealistic architectural rendering based on the provided sketch image.
+      Create a photorealistic architectural rendering.
+      ${masterStylePrompt ? `STYLE: ${masterStylePrompt}` : 'Style: Photorealistic, 8k, Unreal Engine 5.'}
       
-      [CRITICAL STYLE INSTRUCTIONS]
-      ${masterStylePrompt ? `>>> MASTER STYLE ACTIVE: ${masterStylePrompt} \n>>> NOTE: This style instruction is MANDATORY. It must OVERPOWER original colors and generic lighting.` : 'Use standard photorealistic lighting.'}
-
-      [GENERAL VISUALIZATION DESCRIPTION]
+      DESCRIPTION:
       ${optimizedPrompt}
-
-      [GEOMETRY RULES]
-      1. IGNORE the sketch style (lines, paper texture). 
-      2. Use the provided image ONLY for structural geometry.
-      3. Output must be a high-quality, fully rendered 8k architectural visualization.
+      
+      CONSTRAINTS:
+      - Use the provided sketch image strictly for geometry.
+      - High fidelity, detailed textures.
     `;
 
     imageParts.push({ text: imageGenPrompt });
@@ -289,21 +270,24 @@ export const generateArchitecturalPrompt = async (
       }
     }
     
-    // Explicitly check if we got an image. If not, throw error to inform user.
     if (!generatedImageData) {
-        throw new Error("Model returned no image data. The prompt might have triggered safety filters.");
+       // Check if there is text explanation for refusal
+       const textPart = imageResponse.candidates?.[0]?.content?.parts?.find(p => p.text)?.text;
+       throw new Error(textPart || "Model returned no image. It may have been blocked by safety filters.");
     }
 
   } catch (error: any) {
     console.error("Gemini Image API Error:", error);
-    // Propagate the error so the UI shows it, instead of failing silently with just text
-    throw new Error(`Image Generation Failed: ${error.message || 'Unknown error during rendering'}`);
+    // DO NOT THROW HERE. We want to return the prompt even if image fails.
+    // This allows the user to at least copy the prompt.
+    imageGenerationError = `Image Generation Failed: ${error.message || 'Unknown error'}. You can still use the prompt above with other tools.`;
   }
 
   return {
     id: Date.now().toString(),
     prompt: optimizedPrompt,
     imageData: generatedImageData,
+    error: imageGenerationError, // Pass the error to the UI
     timestamp: Date.now()
   };
 };
@@ -317,24 +301,7 @@ export const applyMasterStyle = async (
   
   const parts = [
     { inlineData: { data: currentImageBase64, mimeType: 'image/png' } },
-    { text: `
-      [TASK]
-      Apply a specific photographic filter and atmosphere to the provided architectural rendering.
-
-      [INPUT CONTEXT]
-      The input image is an existing architectural visualization. 
-      Original description: "${originalPrompt}"
-
-      [MASTER STYLE INSTRUCTION]
-      Apply this style strictly: "${stylePrompt}"
-
-      [STRICT GEOMETRY CONSTRAINTS]
-      1. **DO NOT CHANGE THE BUILDING GEOMETRY.** The shape, volume, perspective, and structure MUST remain identical to the input image.
-      2. **DO NOT REPLACE THE BUILDING.** You are only changing the camera filter, lighting, color grading, and adding atmospheric details (fog, reflections, street life).
-      3. You may enhance textures (make concrete more realistic, make glass more reflective).
-      4. You may change the background sky or weather if the style demands it (e.g., night mode, sunset).
-      5. Output must be High Fidelity 8k Photorealism.
-    `}
+    { text: `Apply style: "${stylePrompt}" to this image. Keep geometry. Photorealistic.` }
   ];
 
   try {
@@ -352,7 +319,7 @@ export const applyMasterStyle = async (
       }
     }
     
-    if (!styledImageData) throw new Error("The model did not return an image. It might have been blocked by safety settings.");
+    if (!styledImageData) throw new Error("The model did not return an image.");
     return styledImageData;
   } catch (error: any) {
     console.error("Master Style Application Error:", error);
@@ -370,18 +337,7 @@ export const editArchitecturalImage = async (
    const parts = [
       { inlineData: { data: originalImageBase64, mimeType: 'image/png' } },
       { inlineData: { data: maskImageBase64, mimeType: 'image/png' } },
-      { text: `
-         [TASK]
-         Edit the first image provided (the architectural visualization).
-         Use the second image provided as a MASK.
-         
-         [INSTRUCTIONS]
-         1. The white areas in the mask image indicate the EXACT regions to modify.
-         2. The black areas in the mask image must remain UNCHANGED.
-         3. Change the masked area to match this description: "${editPrompt}".
-         4. Ensure the new content blends seamlessly with the existing lighting, perspective, and style of the original image.
-         5. Return the full image with the edits applied.
-      `}
+      { text: `Edit masked area: "${editPrompt}". Blend seamless.` }
    ];
 
    try {

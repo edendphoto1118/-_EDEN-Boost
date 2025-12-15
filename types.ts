@@ -47,6 +47,7 @@ export interface PromptResult {
   id: string;
   prompt: string;
   imageData?: string;
+  error?: string; // New field for partial failure states
   timestamp: number;
 }
 
