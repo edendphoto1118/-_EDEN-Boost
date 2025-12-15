@@ -2,12 +2,38 @@
 import { GoogleGenAI } from "@google/genai";
 import { UploadedImage, GenerationParams, PromptResult } from "../types";
 
-// Helper to check API Key
+// Helper to check API Key safely across different environments (Vercel/Vite/Next/CRA)
 const getAIClient = () => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) {
-    throw new Error("API_KEY is missing. Please ensure it is set in your environment variables (e.g., .env file or Vercel Dashboard).");
+  let apiKey: string | undefined = undefined;
+
+  // 1. Try standard process.env (Node/Webpack/Next.js/CRA)
+  try {
+    if (typeof process !== 'undefined' && process.env) {
+      apiKey = process.env.API_KEY || 
+               process.env.NEXT_PUBLIC_API_KEY || 
+               process.env.REACT_APP_API_KEY;
+    }
+  } catch (e) {
+    // Ignore ReferenceError if process is not defined
   }
+
+  // 2. Try Vite import.meta.env
+  if (!apiKey) {
+    try {
+      // @ts-ignore - Check for Vite environment
+      if (typeof import.meta !== 'undefined' && import.meta.env) {
+         // @ts-ignore
+         apiKey = import.meta.env.VITE_API_KEY || import.meta.env.PUBLIC_API_KEY || import.meta.env.API_KEY;
+      }
+    } catch (e) {
+      // Ignore syntax errors in non-module environments
+    }
+  }
+
+  if (!apiKey) {
+    throw new Error("API Key is missing. If deploying to Vercel, please set 'VITE_API_KEY' or 'NEXT_PUBLIC_API_KEY' in your Environment Variables.");
+  }
+  
   return new GoogleGenAI({ apiKey });
 };
 
@@ -166,7 +192,7 @@ export const generateArchitecturalPrompt = async (
     optimizedPrompt = response.text || "Failed to generate prompt.";
   } catch (error: any) {
     console.error("Gemini Text API Error:", error);
-    if (error.message?.includes('API_KEY')) throw error;
+    if (error.message?.includes('API Key')) throw error;
     throw new Error(`Analysis failed: ${error.message || 'Unknown error'}`);
   }
 
