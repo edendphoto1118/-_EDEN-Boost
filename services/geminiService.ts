@@ -1,5 +1,5 @@
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { UploadedImage, GenerationParams, PromptResult } from "../types";
 
 // Helper to check API Key safely across different environments (Vercel/Vite/Next/CRA)
@@ -7,7 +7,6 @@ const getAIClient = () => {
   let apiKey = '';
 
   // 1. Try Vite / Modern Bundlers (Using import.meta.env)
-  // We check specifically for VITE_API_KEY as Vercel + Vite requires this prefix
   try {
     // @ts-ignore
     if (typeof import.meta !== 'undefined' && import.meta.env) {
@@ -46,31 +45,61 @@ const getAIClient = () => {
   return new GoogleGenAI({ apiKey });
 };
 
-const fileToPart = async (file: File) => {
-  return new Promise<{ inlineData: { data: string; mimeType: string } }>((resolve, reject) => {
+// Helper: Resize image to ensure API stability (Max 1024px)
+const resizeImage = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onloadend = () => {
-      try {
-        const base64String = reader.result as string;
-        // Ensure valid base64 string
-        if (!base64String || !base64String.includes(',')) {
-          reject(new Error("Failed to process image file."));
-          return;
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 1024; // Reduce size for faster/stable inference
+        
+        if (width > maxDim || height > maxDim) {
+           if (width > height) {
+             height = Math.round(height * (maxDim / width));
+             width = maxDim;
+           } else {
+             width = Math.round(width * (maxDim / height));
+             height = maxDim;
+           }
         }
-        const base64Data = base64String.split(',')[1];
-        resolve({
-          inlineData: {
-            data: base64Data,
-            mimeType: file.type,
-          },
-        });
-      } catch (e) {
-        reject(e);
-      }
+        
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            // Get base64 data only (remove prefix)
+            const dataUrl = canvas.toDataURL(file.type === 'image/png' ? 'image/png' : 'image/jpeg', 0.85);
+            resolve(dataUrl.split(',')[1]);
+        } else {
+            reject(new Error("Canvas context failed"));
+        }
+      };
+      img.onerror = () => reject(new Error("Failed to load image for resizing"));
+      img.src = e.target?.result as string;
     };
     reader.onerror = (e) => reject(new Error("File reading failed"));
     reader.readAsDataURL(file);
   });
+};
+
+const fileToPart = async (file: File) => {
+  try {
+      const base64Data = await resizeImage(file);
+      return {
+          inlineData: {
+              data: base64Data,
+              mimeType: file.type === 'image/png' ? 'image/png' : 'image/jpeg',
+          },
+      };
+  } catch (error) {
+      console.error("Image processing error:", error);
+      throw new Error("Failed to process/resize image. Please try a different file.");
+  }
 };
 
 const getBestAspectRatio = (width?: number, height?: number): string => {
@@ -79,8 +108,6 @@ const getBestAspectRatio = (width?: number, height?: number): string => {
   const ratio = width / height;
   
   // Supported: "1:1", "3:4", "4:3", "9:16", "16:9"
-  // Ratios: 1.0, 0.75, 1.33, 0.5625, 1.77
-  
   const targets = [
     { id: "1:1", val: 1.0 },
     { id: "3:4", val: 0.75 },
@@ -96,6 +123,14 @@ const getBestAspectRatio = (width?: number, height?: number): string => {
 
   return best.id;
 };
+
+// Common safety settings to prevent blocking architectural sketches
+const SAFETY_SETTINGS = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+];
 
 export const optimizeUserPrompt = async (
   inputPrompt: string,
@@ -145,7 +180,7 @@ export const generateArchitecturalPrompt = async (
   // System Instruction construction
   const systemInstruction = `
     You are a world-class Senior Architectural Visualizer and AI Prompt Engineering Expert.
-    Your task is to analyze the provided architectural inputs and generate a highly technical, photorealistic text-to-image prompt optimized for high-end rendering engines (like Midjourney v6, Stable Diffusion XL, or Imagen 3).
+    Your task is to analyze the provided architectural inputs and generate a highly technical, photorealistic text-to-image prompt optimized for high-end rendering engines.
 
     ### INPUTS TO ANALYZE:
     1. Main Sketch: The first attached image.
@@ -195,6 +230,7 @@ export const generateArchitecturalPrompt = async (
       config: {
         systemInstruction: systemInstruction,
         temperature: 0.5,
+        safetySettings: SAFETY_SETTINGS,
       }
     });
 
@@ -241,7 +277,8 @@ export const generateArchitecturalPrompt = async (
       config: {
          imageConfig: { 
            aspectRatio: aspectRatio,
-         }
+         },
+         safetySettings: SAFETY_SETTINGS,
       }
     });
 
@@ -251,10 +288,16 @@ export const generateArchitecturalPrompt = async (
         break;
       }
     }
+    
+    // Explicitly check if we got an image. If not, throw error to inform user.
+    if (!generatedImageData) {
+        throw new Error("Model returned no image data. The prompt might have triggered safety filters.");
+    }
 
-  } catch (error) {
-    // Image generation is optional (can fail gracefully), but good to log
+  } catch (error: any) {
     console.error("Gemini Image API Error:", error);
+    // Propagate the error so the UI shows it, instead of failing silently with just text
+    throw new Error(`Image Generation Failed: ${error.message || 'Unknown error during rendering'}`);
   }
 
   return {
@@ -298,6 +341,7 @@ export const applyMasterStyle = async (
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',
       contents: { parts: parts },
+      config: { safetySettings: SAFETY_SETTINGS }
     });
 
     let styledImageData = "";
@@ -344,6 +388,7 @@ export const editArchitecturalImage = async (
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
         contents: { parts: parts },
+        config: { safetySettings: SAFETY_SETTINGS }
     });
     
     let editedImageData = "";
